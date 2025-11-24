@@ -478,10 +478,11 @@ s3b_nbd_plugin_flush(void *handle, uint32_t flags)
     int r;
 
     // Flush all dirty blocks
-    if ((r = (*fuse_priv->s3b->flush_blocks)(fuse_priv->s3b, NULL, 0, 0)) != 0) {
-        nbdkit_error("error flushing dirty block(s): %s", strerror(r));
-        goto fail;
-    }
+    // disable since we use spdk raid for cache file
+    // if ((r = (*fuse_priv->s3b->flush_blocks)(fuse_priv->s3b, NULL, 0, 0)) != 0) {
+    //     nbdkit_error("error flushing dirty block(s): %s", strerror(r));
+    //     goto fail;
+    // }
 
     // Done
     return 0;
