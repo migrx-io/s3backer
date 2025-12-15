@@ -45,6 +45,7 @@
 #include "test_io.h"
 #include "s3b_config.h"
 #include "util.h"
+#include "swal.h"
 #include "nbdkit.h"
 
 #define NBDKIT_API_VERSION              2
@@ -98,6 +99,54 @@ static int s3b_nbd_plugin_block_size(void *handle, uint32_t *minimum, uint32_t *
 
 static void s3b_nbd_plugin_unload(void);
 
+static swal_t *wal;
+
+// WAL runtime options
+static const char *default_wal_file_path = "/var/tmp/s3b_wal";
+static char *wal_file_path = NULL;                 // set via config; defaults to default_wal_file_path
+static size_t wal_max_file_size = 100 * 1024 * 1024; // 100 MB default
+
+// WAL replay callback — called on WAL replay
+static size_t wal_replay_cb(const void *log, size_t len, uint64_t offset)
+{
+    // Replay through original s3b pwrite
+    if (s3b_nbd_plugin_pwrite(NULL, log, (uint32_t)len, offset, 0) != 0) {
+        nbdkit_error("WAL replay failed at offset %lu", offset);
+	return 1;
+    }
+    return 0;  
+}
+
+// Wrapper around pwrite that logs into WAL first
+static int wal_pwrite(void *handle, const void *buf, uint32_t size, uint64_t offset, uint32_t flags)
+{
+    // Append to WAL
+    if (swal_append(wal, buf, size, offset) != 0) {
+        nbdkit_error("WAL append failed");
+        return -1;
+    }
+
+    return 0;
+}
+
+
+// Initialize WAL after plugin config is complete
+static void wal_init(void)
+{
+    if (wal != NULL) return;  // already initialized
+
+    swal_options_t *opt = swal_options_create();
+    opt->max_file_size = wal_max_file_size * 1024 * 1024;
+    opt->debug = 0;
+
+    const char *path = wal_file_path ? wal_file_path : default_wal_file_path;
+
+
+    if (swal_open(path, opt, &wal, wal_replay_cb) != 0)
+        err(1, "failed to open WAL");
+}
+
+
 #define PLUGIN_HELP                                                                                                 \
     "    foo=bar                Equivalent to s3backer(1) command line flag \"--foo=bar\"\n"                        \
     "    foo=true               Equivalent to boolean s3backer(1) command line flag \"--foo\"\n"                    \
@@ -145,7 +194,7 @@ static struct nbdkit_plugin plugin = {
     .open=                  s3b_nbd_plugin_open,
     .get_size=              s3b_nbd_plugin_get_size,
     .pread=                 s3b_nbd_plugin_pread,
-    .pwrite=                s3b_nbd_plugin_pwrite,
+    .pwrite=                wal_pwrite,
     .trim=                  s3b_nbd_plugin_trim,
     .flush=                 s3b_nbd_plugin_flush,
     .cache=                 NULL,
@@ -178,6 +227,27 @@ s3b_nbd_plugin_config(const char *key, const char *value)
     if (strlen(key) > NBD_S3B_PARAM_PREFIX_LEN && strncmp(key, NBD_S3B_PARAM_PREFIX, NBD_S3B_PARAM_PREFIX_LEN) == 0) {
         key += NBD_S3B_PARAM_PREFIX_LEN;
         had_s3b_prefix = 1;
+    }
+
+    if (strcmp(key, "walDir") == 0) {
+        free(wal_file_path);
+        wal_file_path = strdup(value);
+        if (!wal_file_path) {
+            nbdkit_error("strdup: %m");
+            return -1;
+        }
+        return 0;
+    }
+    
+    if (strcmp(key, "walMaxSize") == 0) {
+        char *end;
+        long val = strtol(value, &end, 10);
+        if (*end != '\0' || val <= 0) {
+            nbdkit_error("invalid walMaxSize: %s", value);
+            return -1;
+        }
+        wal_max_file_size = (size_t)val;
+        return 0;
     }
 
     // Handle special parameter "bucket=xxx" (save for later)
@@ -309,6 +379,10 @@ s3b_nbd_plugin_get_ready(void)
         (*s3b->destroy)(s3b);
         return -1;
     }
+
+    // Initialize WAL
+    wal_init();
+
     return 0;
 }
 
@@ -475,22 +549,23 @@ fail:
 static int
 s3b_nbd_plugin_flush(void *handle, uint32_t flags)
 {
-    int r;
+    //int r;
 
-    // Flush all dirty blocks
-    // disable since we use spdk raid for cache file
-    // if ((r = (*fuse_priv->s3b->flush_blocks)(fuse_priv->s3b, NULL, 0, 0)) != 0) {
-    //     nbdkit_error("error flushing dirty block(s): %s", strerror(r));
-    //     goto fail;
-    // }
+    // if (wal != NULL) {
+    //    r = swal_sync(wal);   // fsync hot WAL and flush if any
+    //    if (r != 0) {
+    //        nbdkit_error("swal_sync failed: %s", strerror(r));
+    //        goto fail;
+    //    }
+    //}
 
     // Done
     return 0;
 
-fail:
+// fail:
     // Fail
-    nbdkit_set_error(r);
-    return -1;
+    //nbdkit_set_error(r);
+    //return -1;
 }
 
 static int

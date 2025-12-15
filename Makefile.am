@@ -48,6 +48,7 @@ noinst_HEADERS=		s3backer.h \
 			fuse_ops.h \
 			hash.h \
 			nbdkit.h \
+			swal.h \
 			util.h \
 			compress.h \
 			http_io.h \
@@ -64,6 +65,7 @@ nbdplugin_LTLIBRARIES=	nbdkit-s3backer-plugin.la
 
 nbdkit_s3backer_plugin_la_SOURCES = \
 			nbdkit.c \
+			swal.c \
 			block_cache.c \
 			block_part.c \
 			dcache.c \

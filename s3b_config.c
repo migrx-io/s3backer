@@ -812,6 +812,11 @@ is_valid_s3b_flag(const char *flag)
 
     if (strcmp(flag, "configFile") == 0)                        // this flag is handled specially and not in the table
         return 2;
+    if (strcmp(flag, "walDir") == 0)
+        return 2;
+    if (strcmp(flag, "walMaxSize") == 0)
+        return 2;
+ 
     for (i = 0; i < num_options; i++) {
         const char *const opt = option_list[i].templ;
         if (strncmp(opt, "--", 2) == 0 && strncmp(opt + 2, flag, flag_len) == 0) {
